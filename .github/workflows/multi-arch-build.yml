@@ -12,11 +12,14 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      max-parallel: 5
       matrix:
         include:
           - arch: aarch64_cortex-a53
             runtime_test: false
           - arch: aarch64_cortex-a72
+            runtime_test: false
+          - arch: aarch64_cortex-a76
             runtime_test: false
           - arch: aarch64_generic
             runtime_test: true
@@ -42,15 +45,19 @@ jobs:
             runtime_test: false
           - arch: arm_fa526
             runtime_test: false
-          - arch: arm_mpcore
-            runtime_test: false
           - arch: arm_xscale
             runtime_test: false
           - arch: i386_pentium-mmx
             runtime_test: true
           - arch: i386_pentium4
             runtime_test: false
+          - arch: loongarch64_generic
+            runtime_test: false
+          - arch: mips64_mips64r2
+            runtime_test: false
           - arch: mips64_octeonplus
+            runtime_test: false
+          - arch: mips64el_mips64r2
             runtime_test: false
           - arch: mips_24kc
             runtime_test: true
@@ -72,30 +79,23 @@ jobs:
             runtime_test: true
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Build
-        uses: immortalwrt/gh-action-sdk@v4
+        uses: immortalwrt/gh-action-sdk@v6
         env:
-          ARCH: ${{ matrix.arch }}
+          ARCH: ${{ matrix.arch }}-openwrt-24.10
           FEEDNAME: v2raya_ci
           PACKAGES: ca-certificates v2fly-geodata v2ray-core xray-core v2raya luci-app-v2raya
           NO_REFRESH_CHECK: 1
-
-      - name: Generate metadata
-        env:
-          BUILD_ARCH: ${{ matrix.arch }}
-          DEBIAN_FRONTEND: noninteractive
-          USIGN_KEY: ${{ secrets.USIGN_KEY }}
-        run: |
-          sudo -H apt -qq install signify-openbsd
-          sudo -H chown -R runner:runner bin
-          ./scripts/generate_index.sh
+          INDEX: 1
+          KEY_BUILD: ${{ secrets.USIGN_KEY }}
+          V: s
 
       - name: Upload feed
-        uses: Pendect/action-rsyncer@8e05ffa5c93e5d9c9b167796b26044d2c616b2b9
+        uses: Pendect/action-rsyncer@9738db02560c333bf629a1533bd86ceda138e599
         with:
           flags: '-ahvHP'
           options: '--delete'
@@ -105,27 +105,20 @@ jobs:
           DEPLOY_KEY: ${{ secrets.SF_KEY }}
 
       - name: Move created packages to project dir
-        run: cp bin/packages/${{ matrix.arch }}/v2raya_ci/*.ipk . || true
+        run: cp bin/packages/${{ matrix.arch }}/v2raya_ci/* . || true
 
       - name: Store packages
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: github.event_name != 'release'
         with:
           name: ${{ matrix.arch }}-${{ github.sha }}-packages
-          path: "*.ipk"
-
-      - name: Release packages
-        uses: svenstaro/upload-release-action@7319e4733ec7a184d739a6f412c40ffc339b69c7
-        if: github.event_name == 'release'
-        with:
-          overwrite: true
-          repo_token: ${{ github.token }}
-          tag: ${{ github.ref }}
-          file: "*.ipk"
-          file_glob: true
+          path: |
+            Packages
+            Packages.*
+            *.ipk
 
       - name: Store logs
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.arch }}-${{ github.sha }}-logs
           path: logs/
@@ -143,11 +136,11 @@ jobs:
       - name: Build Docker container
         if: ${{ matrix.runtime_test }}
         run: |
-          docker build -t test-container --build-arg ARCH .github/workflows/
+          docker build --platform linux/${{ matrix.arch }} -t test-container --build-arg ARCH .github/workflows/
         env:
-          ARCH: ${{ matrix.arch }}
+          ARCH: ${{ matrix.arch }}-openwrt-24.10
 
       - name: Test via Docker container
         if: ${{ matrix.runtime_test }}
         run: |
-          docker run --rm -v $GITHUB_WORKSPACE:/ci test-container
+          docker run --platform linux/${{ matrix.arch }} --rm -v $GITHUB_WORKSPACE:/ci test-container
